@@ -18,7 +18,7 @@ import urllib.request
 import urllib.error
 
 from retrieval_fallback import semantic_search
-from sentiment import analyze_sentiment
+from sentiment_lite import analyze_sentiment
 
 MODEL = "gemini-3.5-flash"
 API_URL = f"https://generativelanguage.googleapis.com/v1beta/models/{MODEL}:generateContent"
