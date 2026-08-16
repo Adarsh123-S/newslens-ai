@@ -1,0 +1,8 @@
+feedparser
+beautifulsoup4
+lxml
+requests
+scikit-learn
+vaderSentiment
+fastapi
+uvicorn
