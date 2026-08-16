@@ -1,0 +1,9 @@
+feedparser
+beautifulsoup4
+lxml
+requests
+scikit-learn
+sentence-transformers
+faiss-cpu
+numpy
+vaderSentiment
