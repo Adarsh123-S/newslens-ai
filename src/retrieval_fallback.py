@@ -17,7 +17,7 @@ from database import get_all_articles
 
 # Minimum similarity score for an article to count as "relevant."
 # Anything below this is considered noise, not a real match.
-MIN_RELEVANCE_SCORE = 0.08
+MIN_RELEVANCE_SCORE = 0.15
 
 
 def semantic_search(query: str, top_k: int = 5):
