@@ -6,3 +6,4 @@ scikit-learn
 vaderSentiment
 fastapi
 uvicorn
+apscheduler

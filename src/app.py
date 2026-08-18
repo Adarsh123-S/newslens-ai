@@ -6,13 +6,37 @@ Run with: uvicorn app:app --reload
 Then open: http://127.0.0.1:8000
 """
 
+from contextlib import asynccontextmanager
+
 from fastapi import FastAPI
 from fastapi.responses import HTMLResponse
 from pydantic import BaseModel
+from apscheduler.schedulers.background import BackgroundScheduler
 
 from rag_pipeline import answer_question
+from collector import collect_all
 
-app = FastAPI(title="NewsLens AI")
+scheduler = BackgroundScheduler()
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # Run once on startup so the live app has fresh articles immediately
+    try:
+        collect_all()
+    except Exception as e:
+        print(f"[startup collect] failed: {e}")
+
+    # Then keep refreshing every hour in the background
+    scheduler.add_job(collect_all, "interval", hours=1, id="hourly_collect")
+    scheduler.start()
+
+    yield  # app runs here
+
+    scheduler.shutdown()
+
+
+app = FastAPI(title="NewsLens AI", lifespan=lifespan)
 
 
 class QuestionRequest(BaseModel):
@@ -28,6 +52,15 @@ def home():
 def ask(req: QuestionRequest):
     result = answer_question(req.question)
     return result
+
+
+@app.post("/refresh")
+def refresh():
+    try:
+        collect_all()
+        return {"status": "ok", "message": "News refreshed successfully."}
+    except Exception as e:
+        return {"status": "error", "message": str(e)}
 
 
 INDEX_HTML = """
@@ -46,7 +79,19 @@ INDEX_HTML = """
     color: #e8e8e8;
   }
   h1 { font-size: 1.8em; margin-bottom: 4px; }
-  .subtitle { color: #999; margin-bottom: 30px; }
+  .subtitle { color: #999; margin-bottom: 12px; }
+  .top-row { display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px; }
+  .refresh-btn {
+    padding: 8px 16px;
+    border-radius: 8px;
+    border: 1px solid #444;
+    background: #1a1d29;
+    color: #ccc;
+    font-size: 0.85em;
+    cursor: pointer;
+  }
+  .refresh-btn:hover { background: #24283a; }
+  .refresh-btn:disabled { opacity: 0.5; cursor: not-allowed; }
   .input-row { display: flex; gap: 8px; margin-bottom: 24px; }
   input[type=text] {
     flex: 1;
@@ -86,11 +131,20 @@ INDEX_HTML = """
     text-decoration: underline;
     margin-right: 12px;
   }
+  #refreshStatus { font-size: 0.8em; color: #999; margin-left: 10px; }
 </style>
 </head>
 <body>
-  <h1>📰 NewsLens AI</h1>
-  <div class="subtitle">Multi-source news research assistant — source comparison, sentiment, contradictions</div>
+  <div class="top-row">
+    <div>
+      <h1>📰 NewsLens AI</h1>
+      <div class="subtitle">Multi-source news research assistant — source comparison, sentiment, contradictions</div>
+    </div>
+    <div>
+      <button class="refresh-btn" id="refreshBtn" onclick="refreshNews()">🔄 Refresh News</button>
+      <span id="refreshStatus"></span>
+    </div>
+  </div>
 
   <div class="examples">
     Try: <span onclick="ask('How are different sources reporting on India\\'s AI regulation?')">AI regulation</span>
@@ -137,6 +191,24 @@ INDEX_HTML = """
         answerBox.innerHTML = 'Error: ' + err.message;
       } finally {
         btn.disabled = false;
+      }
+    }
+
+    async function refreshNews() {
+      const btn = document.getElementById('refreshBtn');
+      const status = document.getElementById('refreshStatus');
+      btn.disabled = true;
+      status.textContent = 'Refreshing...';
+
+      try {
+        const res = await fetch('/refresh', { method: 'POST' });
+        const data = await res.json();
+        status.textContent = data.status === 'ok' ? 'Updated ✓' : 'Failed';
+      } catch (err) {
+        status.textContent = 'Failed';
+      } finally {
+        btn.disabled = false;
+        setTimeout(() => { status.textContent = ''; }, 3000);
       }
     }
 
