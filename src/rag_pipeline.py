@@ -14,6 +14,7 @@ RoBERTa model (sentiment.py) for sentiment scoring.
 
 import json
 import os
+import time
 import urllib.request
 import urllib.error
 
@@ -93,12 +94,27 @@ def ask_llm(query: str, context: str) -> str:
         method="POST",
     )
 
-    try:
-        with urllib.request.urlopen(req) as resp:
-            data = json.loads(resp.read().decode("utf-8"))
-    except urllib.error.HTTPError as e:
-        error_body = e.read().decode("utf-8")
-        raise RuntimeError(f"API request failed ({e.code}): {error_body}") from None
+    max_retries = 3
+    backoff_seconds = 2
+
+    for attempt in range(1, max_retries + 1):
+        try:
+            with urllib.request.urlopen(req) as resp:
+                data = json.loads(resp.read().decode("utf-8"))
+            break  # success, exit retry loop
+        except urllib.error.HTTPError as e:
+            error_body = e.read().decode("utf-8")
+            is_retryable = e.code in (503, 429)  # overloaded / rate-limited
+
+            if is_retryable and attempt < max_retries:
+                wait = backoff_seconds * attempt  # 2s, then 4s
+                print(f"[ask_llm] Attempt {attempt} failed ({e.code}), retrying in {wait}s...")
+                time.sleep(wait)
+                continue
+
+            raise RuntimeError(f"API request failed ({e.code}): {error_body}") from None
+    else:
+        raise RuntimeError("API request failed after all retries")
 
     try:
         candidate = data["candidates"][0]
