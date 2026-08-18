@@ -15,9 +15,15 @@ from sklearn.metrics.pairwise import cosine_similarity
 
 from database import get_all_articles
 
-# Minimum similarity score for an article to count as "relevant."
-# Anything below this is considered noise, not a real match.
-MIN_RELEVANCE_SCORE = 0.11
+# An article must score at least this fraction of the TOP-scoring article's
+# score to be considered relevant. This adapts per-query instead of relying
+# on a fixed number, which doesn't work well since TF-IDF scores shift
+# depending on the question and the current article database.
+RELATIVE_RELEVANCE_CUTOFF = 0.35
+
+# Absolute floor -- even the "best" match must clear this to avoid returning
+# results for completely unrelated queries where nothing scores well.
+ABSOLUTE_FLOOR = 0.04
 
 
 def semantic_search(query: str, top_k: int = 5):
@@ -26,8 +32,6 @@ def semantic_search(query: str, top_k: int = 5):
     if not articles:
         return []
 
-    # Weight titles more heavily than body text by repeating them --
-    # titles tend to carry the clearest topical signal.
     texts = [f"{a['title']} {a['title']} {a['cleaned_text']}" for a in articles]
 
     vectorizer = TfidfVectorizer(stop_words="english", ngram_range=(1, 2))
@@ -39,10 +43,17 @@ def semantic_search(query: str, top_k: int = 5):
     scores = cosine_similarity(query_vec, doc_vecs)[0]
 
     ranked = sorted(zip(articles, scores), key=lambda x: x[1], reverse=True)
+
+    if not ranked or ranked[0][1] < ABSOLUTE_FLOOR:
+        return []  # nothing even remotely relevant
+
+    top_score = ranked[0][1]
+    cutoff = top_score * RELATIVE_RELEVANCE_CUTOFF
+
     results = [
         {**a, "score": float(s)}
         for a, s in ranked[:top_k]
-        if s >= MIN_RELEVANCE_SCORE
+        if s >= cutoff
     ]
     return results
 
