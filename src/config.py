@@ -7,7 +7,7 @@ Add or remove RSS feeds here. Mix of sources is what enables
 RSS_FEEDS = {
     "The Hindu": "https://www.thehindu.com/news/national/feeder/default.rss",
     "Times of India (Top Stories)": "https://timesofindia.indiatimes.com/rssfeedstopstories.cms",
-    "Reuters World": "https://www.reutersagency.com/feed/?best-topics=world&post_type=best",
+    "Reuters World": "https://news.google.com/rss/search?q=when:24h+allinurl:reuters.com&ceid=US:en&hl=en-US&gl=US",
     "BBC World": "http://feeds.bbci.co.uk/news/world/rss.xml",
     "TechCrunch": "https://techcrunch.com/feed/",
     "Al Jazeera": "https://www.aljazeera.com/xml/rss/all.xml",
