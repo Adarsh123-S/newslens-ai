@@ -1,94 +1,113 @@
-# NewsLens AI
+# 📰 NewsLens AI
 
-RAG-based multi-source news research assistant — retrieves articles from
-multiple sources and generates answers with source comparison, agreement/
-contradiction detection, and citations.
+**A multi-source news research assistant that retrieves, compares, and synthesizes live news coverage across outlets — surfacing agreements, contradictions, and sentiment differences between sources.**
 
-## Setup
+🔗 **Live demo:** [newslens-ai-ju3i.onrender.com](https://newslens-ai-ju3i.onrender.com)
 
-1. Install dependencies:
-   ```
-   pip install -r requirements.txt
-   ```
+---
 
-2. Set your Anthropic API key (get one at console.anthropic.com):
-   ```
-   # Windows PowerShell:
-   $env:ANTHROPIC_API_KEY="your-key-here"
+## What it does
 
-   # Mac/Linux:
-   export ANTHROPIC_API_KEY=your-key-here
-   ```
+Ask a question about current events (e.g. *"How are different sources reporting on India's AI regulation?"*), and NewsLens AI:
 
-## Project structure
+1. **Retrieves** the most relevant articles from a live-updating database of real news, pulled hourly from multiple RSS feeds
+2. **Scores sentiment** (positive / neutral / negative) for each retrieved article
+3. **Synthesizes** an answer using an LLM, explicitly structured to show:
+   - A direct summary
+   - What each source individually reports
+   - Where sources **agree**
+   - Where sources **contradict or diverge**
+   - A sentiment breakdown per source, with reasoning — not just a label
+   - The list of sources used
+
+This isn't just a news aggregator — it's designed to make **bias and framing differences across outlets visible**, rather than presenting a single flattened answer.
+
+---
+
+## Architecture
 
 ```
-src/
-  config.py              - RSS feed sources, settings
-  database.py            - SQLite storage layer
-  text_cleaner.py        - HTML stripping / text normalization
-  collector.py           - Phase 1: pulls articles from RSS feeds
-  seed_sample_data.py    - Alternative to collector.py: loads 6 sample
-                            articles for testing without live feeds
-  embeddings.py          - Phase 2: real semantic search
-                            (sentence-transformers + FAISS)
-  retrieval_fallback.py  - Lightweight TF-IDF search (no model download
-                            needed) - useful for quick testing
-  rag_pipeline.py         - Phase 3: retrieval + Claude API generation,
-                            with source comparison / contradiction detection
+RSS Feeds (6 sources)
+      │
+      ▼
+ Collector ──► Clean & dedupe ──► SQLite database
+      │                                │
+      │         (auto-refreshes hourly + on-demand)
+      ▼
+ Retrieval (TF-IDF + cosine similarity,
+ relative relevance filtering)
+      │
+      ▼
+ Sentiment scoring (per retrieved article)
+      │
+      ▼
+ LLM synthesis (Gemini) ──► Structured comparative answer
+      │
+      ▼
+ FastAPI web UI
 ```
 
-## Running it, in order
+**Pipeline phases:**
+- **Phase 1 — Collection:** `collector.py` pulls and cleans articles from RSS feeds defined in `config.py`, storing them in SQLite (`database.py`, `text_cleaner.py`)
+- **Phase 2 — Retrieval:** `retrieval_fallback.py` ranks articles against a query using TF-IDF vectorization and cosine similarity, with a *relative* relevance cutoff (an article must score within a threshold of the top match, rather than against a fixed number) so results adapt per-query instead of relying on a single hardcoded score
+- **Phase 3 — RAG synthesis:** `rag_pipeline.py` builds a labeled context block (article + source + sentiment) and prompts an LLM to produce a structured, source-comparative answer — with retry/backoff handling for transient API failures
+- **Phase 4 — Web app:** `app.py` (FastAPI) serves the UI, exposes `/ask` and `/refresh` endpoints, and runs a background scheduler that re-collects fresh articles every hour
 
-From inside the `src/` folder:
+---
 
-1. **Get articles into the database** (pick one):
-   ```
-   python collector.py          # pulls real articles from RSS feeds
-   ```
-   or, for quick testing without internet-dependent feeds:
-   ```
-   python seed_sample_data.py   # loads 6 sample articles
-   ```
+## Key engineering decisions
 
-2. **Build the semantic search index** (first time, and after adding new articles):
-   ```
-   python embeddings.py
-   ```
-   Note: this downloads the `all-MiniLM-L6-v2` model (~90MB) from
-   HuggingFace on first run.
+- **Two sentiment models, chosen per environment.** Locally, sentiment analysis uses a RoBERTa transformer model (`sentiment.py`) for higher accuracy. In production, it swaps to VADER (`sentiment_lite.py`) — a lightweight, rule-based analyzer — because RoBERTa + PyTorch/Transformers requires 400–500MB+ of RAM just to load, which exceeds free-tier hosting memory limits (e.g. Render's 512MB cap) and would crash the app on deploy.
+- **Retry logic with exponential backoff** around the LLM API call, since free-tier LLM APIs occasionally return `503` (overloaded) or `429` (rate-limited) — these are now retried automatically instead of failing the whole request.
+- **Relative, not absolute, relevance filtering.** An early version of retrieval used a fixed similarity threshold, which proved brittle — too low let irrelevant articles slip in (e.g. matching on incidental word overlap), too high sometimes filtered out every result. Switching to a threshold relative to the top-scoring match for each query made retrieval far more robust across different question types.
+- **Automatic + manual data freshness.** Articles refresh automatically every hour via a background scheduler, with a manual "Refresh News" button in the UI for on-demand updates.
+- **Graceful degradation everywhere.** A broken or malformed RSS feed doesn't crash collection — it's logged and skipped. A query with no relevant articles returns a clear message instead of a hallucinated answer.
 
-3. **Ask a question**:
-   ```
-   python rag_pipeline.py
-   ```
-   This currently uses `retrieval_fallback.py` (TF-IDF) for retrieval by
-   default. To use real semantic search instead, open `rag_pipeline.py`
-   and change:
-   ```python
-   from retrieval_fallback import semantic_search
-   ```
-   to:
-   ```python
-   from embeddings import semantic_search
-   ```
+---
 
-   To ask your own question, edit the query at the bottom of
-   `rag_pipeline.py`, or import `answer_question()` into your own script:
-   ```python
-   from rag_pipeline import answer_question
-   result = answer_question("your question here")
-   print(result["answer"])
-   ```
+## Tech stack
 
-## What's still to build
+| Layer | Tools |
+|---|---|
+| Collection | `feedparser`, `BeautifulSoup4`, `lxml` |
+| Storage | SQLite |
+| Retrieval | `scikit-learn` (TF-IDF + cosine similarity) |
+| Sentiment | `vaderSentiment` (prod) / RoBERTa via `transformers` + `torch` (local) |
+| Generation | Google Gemini API |
+| Backend | FastAPI, `uvicorn`, `APScheduler` |
+| Deployment | Render |
 
-- Sentiment analysis module (RoBERTa-based)
-- Contradiction/timeline detection logic
-- Web UI (FastAPI + frontend)
+---
 
-## Notes
+## Running locally
 
-- `config.py` has the RSS feed list — add/remove sources there.
-- The database lives at `data/newslens.db` (created automatically).
-- Duplicate articles (same URL) are automatically skipped on re-collection.
+```bash
+git clone https://github.com/Adarsh123-S/newslens-ai.git
+cd newslens-ai/src
+pip install -r requirements.txt
+
+# Set your Gemini API key (free tier: aistudio.google.com/apikey)
+export GOOGLE_API_KEY="your-key-here"     # macOS/Linux
+$env:GOOGLE_API_KEY="your-key-here"       # PowerShell
+
+# Collect articles
+python collector.py
+
+# Run the app
+uvicorn app:app --reload
+```
+
+Then open `http://127.0.0.1:8000`.
+
+---
+
+## Possible future improvements
+
+- Real semantic embeddings (`sentence-transformers`) for retrieval, in place of TF-IDF — held back for the hosted demo due to memory constraints, but noted in `embeddings.py` for local use
+- Additional/more resilient RSS sources
+- Persistent storage beyond SQLite for multi-instance deployment
+- Caching layer to reduce redundant LLM calls for repeated questions
+
+---
+
+*Built as an end-to-end exploration of RAG pipelines, multi-source retrieval, and deploying LLM-backed apps under real hosting constraints.*
